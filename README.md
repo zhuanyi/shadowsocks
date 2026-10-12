@@ -10,36 +10,81 @@ A fast tunnel proxy that helps you bypass firewalls.
 Server
 ------
 
-### Install
+### Install (Debian / Ubuntu, systemd)
 
-Debian / Ubuntu:
+    git clone https://github.com/zhuanyi/shadowsocks.git
+    cd shadowsocks
+    sudo ./install.sh
 
-    apt-get install python-pip
-    pip install shadowsocks
+The script installs shadowsocks into a virtualenv in `/opt/shadowsocks`,
+links `ssserver` / `sslocal` into `/usr/local/bin`, creates
+`/etc/shadowsocks.json` with a random password (if you don't have one yet)
+and enables the `shadowsocks-server` systemd service. No source files need
+patching any more, and it works with Python 3.8 - 3.13 and OpenSSL 1.1 / 3.x
+(Debian 11, 12, 13; Ubuntu 20.04+).
 
-CentOS:
+Run it again after `git pull` to upgrade. An existing config is kept as is.
 
-    yum install python-setuptools && easy_install pip
-    pip install shadowsocks
+Manage the service with:
 
-Windows:
+    sudo systemctl status shadowsocks-server
+    sudo systemctl restart shadowsocks-server
+    sudo journalctl -u shadowsocks-server -f
 
-See [Install Server on Windows]
+To install by hand instead: `pip install .` (inside a virtualenv) and copy
+`systemd/shadowsocks-server.service` to `/etc/systemd/system/`.
+
+If you installed an older version with `python setup.py install`, the old
+copy (`/usr/local/lib/python3*/dist-packages/shadowsocks-*.egg`) is no longer
+used once `install.sh` has run and can be deleted.
+
+### Ciphers
+
+Use an **AEAD cipher**, on the server and on every client:
+
+| method                    | notes                                       |
+|---------------------------|---------------------------------------------|
+| `chacha20-ietf-poly1305`  | recommended, fast everywhere, esp. phones   |
+| `aes-256-gcm`             | default; fastest on CPUs with AES-NI        |
+| `aes-128-gcm`             |                                             |
+| `xchacha20-ietf-poly1305` | needs libsodium                             |
+
+All current clients support these: [Android], [Windows], shadowsocks-rust,
+shadowsocks-libev, Shadowrocket, Clash, etc.
+
+The old stream ciphers (`aes-256-cfb`, `rc4-md5`, `chacha20`, `table`, ...)
+still work for compatibility, but they have no integrity protection and are
+easily identified by active probing, so servers using them get blocked
+quickly. ssserver prints a warning when one is configured.
+
+On top of AEAD, the server
+
+* rejects replayed connections (repeated salts), and
+* doesn't close a connection that fails authentication right away; it reads
+  and discards the data until the client gives up or the timeout expires,
+  so probes can't tell it apart from other servers by how it reacts.
+
+**A note on the GFW:** this is a big improvement over stream ciphers, but
+since late 2021 the GFW also blocks some "fully encrypted" traffic that looks
+like random bytes, which includes every Shadowsocks variant, statistically.
+If the server still gets blocked, the more robust options today are
+Shadowsocks 2022 (`2022-blake3-*` ciphers, available in shadowsocks-rust,
+which the Android app also uses) or TLS-based protocols, e.g. a
+v2ray-plugin/TLS setup or Xray (VLESS + REALITY).
 
 ### Usage
 
-    ssserver -p 443 -k password -m aes-256-cfb
+    ssserver -p 443 -k password -m chacha20-ietf-poly1305
 
-To run in the background:
+or with a config file (see `debian/config.json`):
 
-    sudo ssserver -p 443 -k password -m aes-256-cfb --user nobody -d start
+    ssserver -c /etc/shadowsocks.json
 
-To stop:
+Without systemd you can still use the built-in daemon mode:
 
-    sudo ssserver -d stop
-
-To check the log:
-
+    sudo ssserver -c /etc/shadowsocks.json -d start
+    sudo ssserver -c /etc/shadowsocks.json -d status
+    sudo ssserver -c /etc/shadowsocks.json -d stop
     sudo less /var/log/shadowsocks.log
 
 Check all the options via `-h`. You can also use a [Configuration] file

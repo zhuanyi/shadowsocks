@@ -1,3 +1,16 @@
+2.7.0 2026-10-12
+- Support AEAD ciphers (SIP004): aes-128-gcm, aes-192-gcm, aes-256-gcm,
+  chacha20-ietf-poly1305, xchacha20-ietf-poly1305; default is now aes-256-gcm
+- Replay protection for AEAD connections
+- Don't close connections that fail authentication immediately, to resist
+  active probing
+- Warn when a legacy stream cipher is configured
+- Support `-d status`
+- Fix running on Python 3.10+ (collections.MutableMapping removed)
+- Work with OpenSSL 1.0, 1.1 and 3.x without patching; load the OpenSSL 3
+  legacy provider for legacy stream ciphers when needed
+- Add systemd units and a Debian / Ubuntu install script
+
 2.6.10 2015-06-08
 - Optimize LRU cache
 - Refine logging

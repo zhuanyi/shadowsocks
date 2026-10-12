@@ -23,14 +23,54 @@ import hashlib
 import logging
 
 from shadowsocks import common
-from shadowsocks.crypto import rc4_md5, openssl, sodium, table
+from shadowsocks.crypto import rc4_md5, openssl, sodium, table, aead
 
 
+# legacy stream ciphers: method: (key_len, iv_len, class)
 method_supported = {}
 method_supported.update(rc4_md5.ciphers)
 method_supported.update(openssl.ciphers)
 method_supported.update(sodium.ciphers)
 method_supported.update(table.ciphers)
+
+# AEAD ciphers (recommended): method: (key_len, salt_len, nonce_len, backend)
+aead_method_supported = aead.ciphers
+
+
+def is_aead(method):
+    return (method or '').lower() in aead_method_supported
+
+
+class SaltFilter(object):
+    """Remembers recently seen AEAD salts to reject replayed connections.
+
+    Two generations are kept; when the current one is full the older one is
+    dropped, so memory stays bounded at 2 * capacity salts.
+    """
+
+    def __init__(self, capacity=100000):
+        self._capacity = capacity
+        self._current = set()
+        self._previous = set()
+
+    def check_and_add(self, salt):
+        if salt in self._current or salt in self._previous:
+            return False
+        if len(self._current) >= self._capacity:
+            self._previous = self._current
+            self._current = set()
+        self._current.add(salt)
+        return True
+
+
+salt_filter = SaltFilter()
+
+
+def check_salt(salt, from_peer):
+    # salts we generate ourselves are recorded too, so that our own responses
+    # can't be reflected back to us as new requests
+    if not salt_filter.check_and_add(salt) and from_peer:
+        raise aead.AeadError('repeated salt detected, possible replay attack')
 
 
 def random_string(length):
@@ -41,7 +81,10 @@ cached_keys = {}
 
 
 def try_cipher(key, method=None):
-    Encryptor(key, method)
+    if is_aead(method):
+        AeadEncryptor(key, method).encrypt(b'test')
+    else:
+        Encryptor(key, method)
 
 
 def EVP_BytesToKey(password, key_len, iv_len):
@@ -131,9 +174,28 @@ class Encryptor(object):
         return self.decipher.update(buf)
 
 
+class AeadEncryptor(aead.AeadEncryptor):
+    def __init__(self, password, method, replay_protection=False):
+        method = method.lower()
+        key_len = aead_method_supported[method][0]
+        key, _ = EVP_BytesToKey(common.to_bytes(password), key_len, 0)
+        on_salt = check_salt if replay_protection else None
+        super(AeadEncryptor, self).__init__(key, method, on_salt)
+
+
+def new_encryptor(password, method, replay_protection=False):
+    if is_aead(method):
+        return AeadEncryptor(password, method, replay_protection)
+    return Encryptor(password, method)
+
+
 def encrypt_all(password, method, op, data):
     result = []
     method = method.lower()
+    if method in aead_method_supported:
+        key_len = aead_method_supported[method][0]
+        key, _ = EVP_BytesToKey(common.to_bytes(password), key_len, 0)
+        return aead.encrypt_all(key, method, op, data)
     (key_len, iv_len, m) = method_supported[method]
     if key_len > 0:
         key, _ = EVP_BytesToKey(password, key_len, iv_len)
@@ -151,6 +213,9 @@ def encrypt_all(password, method, op, data):
 
 
 CIPHERS_TO_TEST = [
+    'aes-128-gcm',
+    'aes-256-gcm',
+    'chacha20-ietf-poly1305',
     'aes-128-cfb',
     'aes-256-cfb',
     'rc4-md5',
@@ -164,9 +229,9 @@ def test_encryptor():
     from os import urandom
     plain = urandom(10240)
     for method in CIPHERS_TO_TEST:
-        logging.warn(method)
-        encryptor = Encryptor(b'key', method)
-        decryptor = Encryptor(b'key', method)
+        logging.warning(method)
+        encryptor = new_encryptor(b'key', method)
+        decryptor = new_encryptor(b'key', method)
         cipher = encryptor.encrypt(plain)
         plain2 = decryptor.decrypt(cipher)
         assert plain == plain2
@@ -176,12 +241,24 @@ def test_encrypt_all():
     from os import urandom
     plain = urandom(10240)
     for method in CIPHERS_TO_TEST:
-        logging.warn(method)
+        logging.warning(method)
         cipher = encrypt_all(b'key', method, 1, plain)
         plain2 = encrypt_all(b'key', method, 0, cipher)
         assert plain == plain2
 
 
+def test_replay_protection():
+    plain = b'x' * 100
+    data = new_encryptor(b'key', 'aes-256-gcm').encrypt(plain)
+    assert new_encryptor(b'key', 'aes-256-gcm', True).decrypt(data) == plain
+    try:
+        new_encryptor(b'key', 'aes-256-gcm', True).decrypt(data)
+    except aead.AeadError:
+        return
+    raise AssertionError('replayed data was accepted')
+
+
 if __name__ == '__main__':
     test_encrypt_all()
     test_encryptor()
+    test_replay_protection()

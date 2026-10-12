@@ -17,6 +17,7 @@
 from __future__ import absolute_import, division, print_function, \
     with_statement
 
+import logging
 from ctypes import c_char_p, c_int, c_long, byref,\
     create_string_buffer, c_void_p
 
@@ -27,6 +28,7 @@ __all__ = ['ciphers']
 
 libcrypto = None
 loaded = False
+legacy_loaded = False
 
 buf_size = 2048
 
@@ -41,6 +43,7 @@ def load_openssl():
         raise Exception('libcrypto(OpenSSL) not found')
 
     libcrypto.EVP_get_cipherbyname.restype = c_void_p
+    libcrypto.EVP_get_cipherbyname.argtypes = (c_char_p,)
     libcrypto.EVP_CIPHER_CTX_new.restype = c_void_p
 
     libcrypto.EVP_CipherInit_ex.argtypes = (c_void_p, c_void_p, c_char_p,
@@ -49,13 +52,47 @@ def load_openssl():
     libcrypto.EVP_CipherUpdate.argtypes = (c_void_p, c_void_p, c_void_p,
                                            c_char_p, c_int)
 
-    libcrypto.EVP_CIPHER_CTX_reset.argtypes = (c_void_p,)
+    # EVP_CIPHER_CTX_free() also cleans up the context, on OpenSSL 1.0
+    # (where EVP_CIPHER_CTX_reset() doesn't exist) as well as on 1.1+
+    # (where EVP_CIPHER_CTX_cleanup() doesn't exist), so it's all we call
     libcrypto.EVP_CIPHER_CTX_free.argtypes = (c_void_p,)
     if hasattr(libcrypto, 'OpenSSL_add_all_ciphers'):
         libcrypto.OpenSSL_add_all_ciphers()
 
     buf = create_string_buffer(buf_size)
     loaded = True
+
+
+def load_legacy_provider():
+    # OpenSSL 3 moved old ciphers (bf, cast5, des, idea, rc2, rc4, seed)
+    # into the "legacy" provider, which isn't loaded by default.
+    # Loading any provider explicitly disables the implicit default one,
+    # so load both.
+    global legacy_loaded
+    if legacy_loaded:
+        return
+    legacy_loaded = True
+    load = getattr(libcrypto, 'OSSL_PROVIDER_load', None)
+    if load is None:
+        return
+    load.restype = c_void_p
+    load.argtypes = (c_void_p, c_char_p)
+    if load(None, b'legacy'):
+        load(None, b'default')
+        logging.info('loaded OpenSSL legacy provider')
+
+
+def get_cipher(cipher_name):
+    if not loaded:
+        load_openssl()
+    cipher_name = common.to_bytes(cipher_name)
+    cipher = libcrypto.EVP_get_cipherbyname(cipher_name)
+    if not cipher:
+        cipher = load_cipher(cipher_name)
+    if not cipher:
+        load_legacy_provider()
+        cipher = libcrypto.EVP_get_cipherbyname(cipher_name)
+    return cipher
 
 
 def load_cipher(cipher_name):
@@ -72,12 +109,7 @@ def load_cipher(cipher_name):
 class OpenSSLCrypto(object):
     def __init__(self, cipher_name, key, iv, op):
         self._ctx = None
-        if not loaded:
-            load_openssl()
-        cipher_name = common.to_bytes(cipher_name)
-        cipher = libcrypto.EVP_get_cipherbyname(cipher_name)
-        if not cipher:
-            cipher = load_cipher(cipher_name)
+        cipher = get_cipher(cipher_name)
         if not cipher:
             raise Exception('cipher %s not found in libcrypto' % cipher_name)
         key_ptr = c_char_p(key)
@@ -87,9 +119,17 @@ class OpenSSLCrypto(object):
             raise Exception('can not create cipher context')
         r = libcrypto.EVP_CipherInit_ex(self._ctx, cipher, None,
                                         key_ptr, iv_ptr, c_int(op))
+        if not r and not legacy_loaded:
+            # OpenSSL 3 knows the name of a legacy cipher but can't use it
+            # until the legacy provider is loaded
+            load_legacy_provider()
+            r = libcrypto.EVP_CipherInit_ex(self._ctx, cipher, None,
+                                            key_ptr, iv_ptr, c_int(op))
         if not r:
             self.clean()
-            raise Exception('can not initialize cipher context')
+            raise Exception('can not initialize cipher context for %s; on '
+                            'OpenSSL 3 legacy ciphers need the legacy '
+                            'provider' % common.to_str(cipher_name))
 
     def update(self, data):
         global buf_size, buf
@@ -108,8 +148,8 @@ class OpenSSLCrypto(object):
 
     def clean(self):
         if self._ctx:
-            libcrypto.EVP_CIPHER_CTX_reset(self._ctx)
             libcrypto.EVP_CIPHER_CTX_free(self._ctx)
+            self._ctx = None
 
 
 ciphers = {

@@ -46,6 +46,9 @@ def daemon_exec(config):
         elif command == 'restart':
             daemon_stop(pid_file)
             daemon_start(pid_file, log_file)
+        elif command == 'status':
+            # exit codes follow the LSB init script conventions
+            sys.exit(daemon_status(pid_file))
         else:
             raise Exception('unsupported daemon command %s' % command)
 
@@ -174,6 +177,40 @@ def daemon_stop(pid_file):
         sys.exit(1)
     print('stopped')
     os.unlink(pid_file)
+
+
+def daemon_status(pid_file):
+    import errno
+    try:
+        with open(pid_file) as f:
+            buf = f.read().strip()
+    except IOError as e:
+        if e.errno == errno.ENOENT:
+            print('not running')
+            return 3
+        shell.print_exception(e)
+        return 4
+    try:
+        pid = int(buf)
+    except ValueError:
+        print('not running (invalid pid file %s)' % pid_file)
+        return 1
+    if pid <= 0:
+        print('not running (invalid pid file %s)' % pid_file)
+        return 1
+    try:
+        os.kill(pid, 0)
+    except OSError as e:
+        if e.errno == errno.ESRCH:
+            print('not running (stale pid file %s, pid %d)' %
+                  (pid_file, pid))
+            return 1
+        if e.errno != errno.EPERM:
+            shell.print_exception(e)
+            return 4
+        # EPERM: the process exists but belongs to another user
+    print('running (pid %d)' % pid)
+    return 0
 
 
 def set_user(username):

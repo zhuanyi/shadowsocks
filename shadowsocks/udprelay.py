@@ -149,12 +149,17 @@ class UDPRelay(object):
         if self._is_local:
             frag = common.ord(data[2])
             if frag != 0:
-                logging.warn('drop a message since frag is not 0')
+                logging.warning('drop a message since frag is not 0')
                 return
             else:
                 data = data[3:]
         else:
-            data = encrypt.encrypt_all(self._password, self._method, 0, data)
+            try:
+                data = encrypt.encrypt_all(self._password, self._method, 0,
+                                           data)
+            except Exception as e:
+                logging.debug('UDP handle_server: drop packet: %s', e)
+                return
             # decrypt data
             if not data:
                 logging.debug('UDP handle_server: data is empty after decrypt')
@@ -226,8 +231,12 @@ class UDPRelay(object):
             if not response:
                 return
         else:
-            data = encrypt.encrypt_all(self._password, self._method, 0,
-                                       data)
+            try:
+                data = encrypt.encrypt_all(self._password, self._method, 0,
+                                           data)
+            except Exception as e:
+                logging.debug('UDP handle_client: drop packet: %s', e)
+                return
             if not data:
                 return
             header_result = parse_header(data)
