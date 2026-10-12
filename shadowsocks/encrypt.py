@@ -23,7 +23,8 @@ import hashlib
 import logging
 
 from shadowsocks import common
-from shadowsocks.crypto import rc4_md5, openssl, sodium, table, aead
+from shadowsocks.crypto import rc4_md5, openssl, sodium, table, aead, \
+    aead2022
 
 
 # legacy stream ciphers: method: (key_len, iv_len, class)
@@ -39,6 +40,11 @@ aead_method_supported = aead.ciphers
 
 def is_aead(method):
     return (method or '').lower() in aead_method_supported
+
+
+# Shadowsocks 2022 ciphers: method: (key_len, payload cipher)
+aead2022_method_supported = aead2022.ciphers
+is_aead2022 = aead2022.is_aead2022
 
 
 class SaltFilter(object):
@@ -81,7 +87,11 @@ cached_keys = {}
 
 
 def try_cipher(key, method=None):
-    if is_aead(method):
+    if is_aead2022(method):
+        aead2022.decode_psk(key, method.lower())
+        aead2022.Aead2022Encryptor(key, method, False).encrypt(
+            b'\x01\x00\x00\x00\x00\x00\x00')
+    elif is_aead(method):
         AeadEncryptor(key, method).encrypt(b'test')
     else:
         Encryptor(key, method)
@@ -184,6 +194,9 @@ class AeadEncryptor(aead.AeadEncryptor):
 
 
 def new_encryptor(password, method, replay_protection=False):
+    """replay_protection is True for ssserver, False for sslocal"""
+    if is_aead2022(method):
+        return aead2022.Aead2022Encryptor(password, method, replay_protection)
     if is_aead(method):
         return AeadEncryptor(password, method, replay_protection)
     return Encryptor(password, method)

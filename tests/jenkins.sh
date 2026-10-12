@@ -32,6 +32,9 @@ run_test pyflakes .
 run_test coverage run tests/nose_plugin.py -v
 run_test python setup.py sdist
 run_test tests/test_daemon.sh
+run_test python tests/test.py --with-coverage -c tests/2022-blake3-aes-128-gcm.json
+run_test python tests/test.py --with-coverage -c tests/2022-blake3-aes-256-gcm.json
+run_test python tests/test.py --with-coverage -c tests/2022-blake3-chacha20-poly1305.json
 run_test python tests/test.py --with-coverage -c tests/aes-gcm.json
 run_test python tests/test.py --with-coverage -c tests/aes-128-gcm.json
 run_test python tests/test.py --with-coverage -c tests/chacha20-ietf-poly1305.json

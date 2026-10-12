@@ -107,12 +107,24 @@ def check_config(config, is_local):
                         'are you sure?' %
                         (to_str(config['server']), config['server_port']))
     method = (config.get('method', '') or '').lower()
-    if not encrypt.is_aead(method):
+    if encrypt.is_aead2022(method):
+        if config.get('port_password'):
+            passwords = list(config['port_password'].values())
+        else:
+            passwords = [config['password']]
+        for password in passwords:
+            try:
+                encrypt.aead2022.decode_psk(password, method)
+            except ValueError as e:
+                logging.error(e)
+                sys.exit(2)
+    elif not encrypt.is_aead(method):
         logging.warning('warning: %s is a legacy stream cipher: it has no '
                         'integrity protection and is easily detected and '
                         'blocked by active probing. Please switch both the '
-                        'server and the clients to an AEAD cipher such as '
-                        'chacha20-ietf-poly1305 or aes-256-gcm', method)
+                        'server and the clients to a modern cipher such as '
+                        '2022-blake3-aes-256-gcm or chacha20-ietf-poly1305',
+                        method)
     if config.get('timeout', 300) < 100:
         logging.warning('warning: your timeout %d seems too short' %
                         int(config.get('timeout')))
@@ -128,6 +140,9 @@ def check_config(config, is_local):
             logging.error('user can be used only on Unix')
             sys.exit(1)
 
+    if encrypt.is_aead2022(method) and not config.get('password'):
+        # port_password only; the keys have been checked above
+        return
     encrypt.try_cipher(config['password'], config['method'])
 
 
@@ -289,7 +304,7 @@ Proxy options:
   -p SERVER_PORT         server port, default: 8388
   -b LOCAL_ADDR          local binding address, default: 127.0.0.1
   -l LOCAL_PORT          local port, default: 1080
-  -k PASSWORD            password
+  -k PASSWORD            password (base64 key for 2022-* methods)
   -m METHOD              encryption method, default: aes-256-gcm
   -t TIMEOUT             timeout in seconds, default: 300
   --fast-open            use TCP_FASTOPEN, requires Linux 3.7+
@@ -319,7 +334,7 @@ Proxy options:
   -c CONFIG              path to config file
   -s SERVER_ADDR         server address, default: 0.0.0.0
   -p SERVER_PORT         server port, default: 8388
-  -k PASSWORD            password
+  -k PASSWORD            password (base64 key for 2022-* methods)
   -m METHOD              encryption method, default: aes-256-gcm
   -t TIMEOUT             timeout in seconds, default: 300
   --fast-open            use TCP_FASTOPEN, requires Linux 3.7+

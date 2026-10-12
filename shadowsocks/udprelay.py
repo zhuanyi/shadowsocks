@@ -70,6 +70,7 @@ import errno
 import random
 
 from shadowsocks import encrypt, eventloop, lru_cache, common, shell
+from shadowsocks.crypto import aead2022
 from shadowsocks.common import parse_header, pack_addr
 
 
@@ -102,6 +103,16 @@ class UDPRelay(object):
                                          close_callback=self._close_client)
         self._client_fd_to_server_addr = \
             lru_cache.LRUCache(timeout=config['timeout'])
+        # Shadowsocks 2022 keeps per session state:
+        # ssserver: one codec, plus the client session of each socket
+        # sslocal: one codec (= one session) per socket
+        self._aead2022 = encrypt.is_aead2022(self._method)
+        self._codec = None
+        if self._aead2022 and not is_local:
+            self._codec = aead2022.UdpServerCodec(self._password,
+                                                  self._method,
+                                                  config['timeout'])
+        self._client_fd_to_session = {}
         self._eventloop = None
         self._closed = False
         self._last_time = time.time()
@@ -134,6 +145,7 @@ class UDPRelay(object):
 
     def _close_client(self, client):
         if hasattr(client, 'close'):
+            self._client_fd_to_session.pop(client.fileno(), None)
             self._sockets.remove(client.fileno())
             self._eventloop.remove(client)
             client.close()
@@ -154,9 +166,13 @@ class UDPRelay(object):
             else:
                 data = data[3:]
         else:
+            client_session = None
             try:
-                data = encrypt.encrypt_all(self._password, self._method, 0,
-                                           data)
+                if self._aead2022:
+                    client_session, data = self._codec.decode(data)
+                else:
+                    data = encrypt.encrypt_all(self._password, self._method,
+                                               0, data)
             except Exception as e:
                 logging.debug('UDP handle_server: drop packet: %s', e)
                 return
@@ -199,10 +215,21 @@ class UDPRelay(object):
             self._eventloop.add(client, eventloop.POLL_IN)
 
         if self._is_local:
-            data = encrypt.encrypt_all(self._password, self._method, 1, data)
+            if self._aead2022:
+                codec = self._client_fd_to_session.get(client.fileno())
+                if codec is None:
+                    codec = aead2022.UdpClientCodec(self._password,
+                                                    self._method)
+                    self._client_fd_to_session[client.fileno()] = codec
+                data = codec.encode(data)
+            else:
+                data = encrypt.encrypt_all(self._password, self._method, 1,
+                                           data)
             if not data:
                 return
         else:
+            if client_session is not None:
+                self._client_fd_to_session[client.fileno()] = client_session
             data = data[header_length:]
         if not data:
             return
@@ -226,14 +253,26 @@ class UDPRelay(object):
                 # drop
                 return
             data = pack_addr(r_addr[0]) + struct.pack('>H', r_addr[1]) + data
-            response = encrypt.encrypt_all(self._password, self._method, 1,
-                                           data)
+            if self._aead2022:
+                client_session = self._client_fd_to_session.get(sock.fileno())
+                if client_session is None:
+                    return
+                response = self._codec.encode(client_session, data)
+            else:
+                response = encrypt.encrypt_all(self._password, self._method,
+                                               1, data)
             if not response:
                 return
         else:
             try:
-                data = encrypt.encrypt_all(self._password, self._method, 0,
-                                           data)
+                if self._aead2022:
+                    codec = self._client_fd_to_session.get(sock.fileno())
+                    if codec is None:
+                        return
+                    data = codec.decode(data)
+                else:
+                    data = encrypt.encrypt_all(self._password, self._method,
+                                               0, data)
             except Exception as e:
                 logging.debug('UDP handle_client: drop packet: %s', e)
                 return

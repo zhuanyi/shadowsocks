@@ -1,0 +1,10 @@
+{
+    "server":"127.0.0.1",
+    "server_port":8388,
+    "local_port":1081,
+    "password":"23dO9AT5UoFR0Jcv1mGfowjoYQMOLtxJgPWs1kDJIAg=",
+    "timeout":60,
+    "method":"2022-blake3-chacha20-poly1305",
+    "local_address":"127.0.0.1",
+    "fast_open":false
+}

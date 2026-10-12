@@ -9,7 +9,10 @@
 - Fix running on Python 3.10+ (collections.MutableMapping removed)
 - Work with OpenSSL 1.0, 1.1 and 3.x without patching; load the OpenSSL 3
   legacy provider for legacy stream ciphers when needed
-- Add systemd units and a Debian / Ubuntu install script
+- Support Shadowsocks 2022 (SIP022): 2022-blake3-aes-128-gcm,
+  2022-blake3-aes-256-gcm and 2022-blake3-chacha20-poly1305, TCP and UDP
+- Add systemd units and Debian / Ubuntu install / uninstall scripts; the
+  installer migrates old `setup.py install` installs and keeps the config
 
 2.6.10 2015-06-08
 - Optimize LRU cache

@@ -11,16 +11,21 @@
 #   * installs this source tree into a virtualenv in /opt/shadowsocks
 #     (no more `python setup.py install`, no files to patch by hand, and no
 #     clash with Debian's "externally managed" system Python)
+#   * stops a server started the old way (ssserver -d start) and removes
+#     old copies installed with `python setup.py install` or `pip install`
+#     into the system Python; the config file is kept (and backed up)
 #   * links /usr/local/bin/ssserver and /usr/local/bin/sslocal to it
 #   * creates a `shadowsocks` system user to run the service as
-#   * creates /etc/shadowsocks.json with a random password if it is missing
+#   * creates /etc/shadowsocks.json with a random key if it is missing
 #   * installs and starts the shadowsocks-server systemd service
+#
+# Run it again after `git pull` to upgrade. To remove: sudo ./uninstall.sh
 #
 # Environment variables:
 #   SS_CONFIG   config file to use (default /etc/shadowsocks.json)
 #   SS_PORT     server port for a newly generated config (default 8388)
 #   SS_METHOD   cipher for a newly generated config
-#               (default chacha20-ietf-poly1305)
+#               (default 2022-blake3-aes-256-gcm)
 
 set -eu
 
@@ -29,7 +34,7 @@ PREFIX=/opt/shadowsocks
 VENV=$PREFIX/venv
 CONFIG=${SS_CONFIG:-/etc/shadowsocks.json}
 PORT=${SS_PORT:-8388}
-METHOD=${SS_METHOD:-chacha20-ietf-poly1305}
+METHOD=${SS_METHOD:-2022-blake3-aes-256-gcm}
 SERVICE=shadowsocks-server
 USER_NAME=shadowsocks
 
@@ -46,8 +51,9 @@ fi
 echo "==> installing system packages"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv
-# optional: libsodium is only needed for xchacha20-ietf-poly1305 and the
-# legacy salsa20 / chacha20 stream ciphers
+# optional: libsodium is only needed for UDP with
+# 2022-blake3-chacha20-poly1305, xchacha20-ietf-poly1305 and the legacy
+# salsa20 / chacha20 stream ciphers
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libsodium23 \
     >/dev/null 2>&1 || true
 
@@ -58,14 +64,60 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet --upgrade "$SRC_DIR"
+# optional: a faster BLAKE3 for the 2022 ciphers (a pure-Python fallback
+# is built in)
+"$VENV/bin/pip" install --quiet blake3 >/dev/null 2>&1 || true
 
 # stop an instance started the old way (ssserver -d start) so that the
 # service can bind the port
-if [ -f "$CONFIG" ] && [ -f /var/run/shadowsocks.pid ] && \
-        ! systemctl is-active --quiet "$SERVICE"; then
-    echo "==> stopping old ssserver daemon"
-    "$VENV/bin/ssserver" -c "$CONFIG" -d stop || true
+if [ -f "$CONFIG" ] && ! systemctl is-active --quiet "$SERVICE"; then
+    if "$VENV/bin/ssserver" -c "$CONFIG" -d status >/dev/null 2>&1; then
+        echo "==> stopping old ssserver daemon"
+        "$VENV/bin/ssserver" -c "$CONFIG" -d stop || true
+    fi
 fi
+
+if [ -f "$CONFIG" ]; then
+    BACKUP="$CONFIG.bak-$(date +%Y%m%d%H%M%S)"
+    cp -p "$CONFIG" "$BACKUP"
+    echo "==> backed up $CONFIG to $BACKUP"
+fi
+
+# remove old copies installed into the system Python with
+# `python setup.py install` (an .egg) or `pip install`; they are no longer
+# used and would only cause confusion
+for site in /usr/local/lib/python3*/dist-packages \
+            /usr/local/lib/python3*/site-packages; do
+    [ -d "$site" ] || continue
+    for old in "$site"/shadowsocks-*.egg "$site"/shadowsocks-*.egg-info \
+               "$site"/shadowsocks-*.dist-info; do
+        [ -e "$old" ] || continue
+        echo "==> removing old install $old"
+        rm -rf "$old"
+        if [ "${old%.dist-info}" != "$old" ] || \
+                [ "${old%.egg-info}" != "$old" ]; then
+            # pip / plain setup.py install put the package next to it
+            rm -rf "$site/shadowsocks"
+        fi
+    done
+    if [ -f "$site/easy-install.pth" ]; then
+        sed -i '/shadowsocks-.*\.egg/d' "$site/easy-install.pth"
+    fi
+done
+
+if dpkg -s shadowsocks >/dev/null 2>&1; then
+    echo "NOTE: the Debian 'shadowsocks' package is also installed. Remove it"
+    echo "      with 'apt-get remove shadowsocks' (not purge, which would"
+    echo "      delete its config in /etc/shadowsocks/)."
+fi
+for f in /etc/rc.local /etc/crontab /etc/cron.d/* \
+         /var/spool/cron/crontabs/*; do
+    if [ -f "$f" ] && grep -q 'ss\(server\|local\).*-d *\(start\|restart\)' \
+            "$f"; then
+        echo "NOTE: $f starts ssserver/sslocal on its own; remove that line,"
+        echo "      systemd starts the server at boot now."
+    fi
+done
 
 for prog in ssserver sslocal; do
     ln -sf "$VENV/bin/$prog" "/usr/local/bin/$prog"
@@ -79,7 +131,16 @@ fi
 
 if [ ! -f "$CONFIG" ]; then
     echo "==> generating $CONFIG"
-    PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
+    case "$METHOD" in
+        2022-blake3-aes-128-gcm) KEY_LEN=16 ;;
+        *) KEY_LEN=32 ;;
+    esac
+    case "$METHOD" in
+        2022-*) PASSWORD=$(python3 -c "import base64, os
+print(base64.b64encode(os.urandom($KEY_LEN)).decode())") ;;
+        *) PASSWORD=$(python3 -c 'import secrets
+print(secrets.token_urlsafe(24))') ;;
+    esac
     cat > "$CONFIG" <<CONF
 {
     "server": "0.0.0.0",
@@ -96,16 +157,16 @@ else
     if ! python3 - "$CONFIG" <<'PY'
 import json, sys
 m = (json.load(open(sys.argv[1])).get('method') or 'aes-256-gcm').lower()
-sys.exit(0 if m in ('aes-128-gcm', 'aes-192-gcm', 'aes-256-gcm',
-                    'chacha20-ietf-poly1305',
-                    'xchacha20-ietf-poly1305') else 1)
+sys.exit(0 if m.startswith('2022-blake3-') or m in (
+    'aes-128-gcm', 'aes-192-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305',
+    'xchacha20-ietf-poly1305') else 1)
 PY
     then
         echo
         echo "WARNING: $CONFIG uses a legacy stream cipher, which is easily"
-        echo "         detected and blocked. Change \"method\" to"
-        echo "         \"chacha20-ietf-poly1305\" (or \"aes-256-gcm\") here AND in"
-        echo "         all your clients, then: systemctl restart $SERVICE"
+        echo "         detected and blocked. See README.md (Ciphers) for how"
+        echo "         to switch to 2022-blake3-aes-256-gcm, here AND in all"
+        echo "         your clients, then: systemctl restart $SERVICE"
         echo
     fi
     if grep -q '"user"' "$CONFIG"; then
@@ -138,5 +199,9 @@ if [ "$NEW_CONFIG" = 1 ]; then
     echo "  port:     $PORT"
     echo "  password: $PASSWORD"
     echo "  method:   $METHOD"
+    case "$METHOD" in
+        2022-*) echo "the 2022 ciphers reject clients whose clock is off by"
+                echo "more than 30 seconds; keep time in sync on both sides." ;;
+    esac
     echo "remember to open port $PORT (TCP and UDP) in your firewall."
 fi
