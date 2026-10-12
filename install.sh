@@ -56,6 +56,9 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv
 # salsa20 / chacha20 stream ciphers
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libsodium23 \
     >/dev/null 2>&1 || true
+# optional: QR codes in `sslink`
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qrencode \
+    >/dev/null 2>&1 || true
 
 echo "==> installing shadowsocks into $VENV"
 mkdir -p "$PREFIX"
@@ -119,7 +122,7 @@ for f in /etc/rc.local /etc/crontab /etc/cron.d/* \
     fi
 done
 
-for prog in ssserver sslocal; do
+for prog in ssserver sslocal sslink; do
     ln -sf "$VENV/bin/$prog" "/usr/local/bin/$prog"
 done
 
@@ -193,12 +196,15 @@ echo "done. useful commands:"
 echo "  systemctl status $SERVICE"
 echo "  systemctl restart $SERVICE"
 echo "  journalctl -u $SERVICE -f"
+echo "  sslink -H <server address>   # ss:// links + QR codes for clients"
 if [ "$NEW_CONFIG" = 1 ]; then
     echo
     echo "client settings (also in $CONFIG):"
     echo "  port:     $PORT"
     echo "  password: $PASSWORD"
     echo "  method:   $METHOD"
+    echo
+    "$VENV/bin/sslink" -c "$CONFIG" || true
     case "$METHOD" in
         2022-*) echo "the 2022 ciphers reject clients whose clock is off by"
                 echo "more than 30 seconds; keep time in sync on both sides." ;;

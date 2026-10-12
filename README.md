@@ -35,6 +35,21 @@ Manage the service with:
 To install by hand instead: `pip install .` (inside a virtualenv) and copy
 `systemd/shadowsocks-server.service` to `/etc/systemd/system/`.
 
+### Sharing a connection (ss:// links and QR codes)
+
+    sudo sslink                       # guesses the server's address
+    sudo sslink -H vps.example.com    # use this address or domain
+    sudo sslink -n "My VPS"           # name shown in the client
+
+prints an `ss://` link and a QR code for every port in
+`/etc/shadowsocks.json` (`-c` for another config). Scan the QR code with the
+Android app (+ > Scan QR code), or copy the link and import it from the
+clipboard in the Android app or v2rayN. Use `-H` with the public address if
+the server is behind NAT. For a PNG instead:
+`qrencode -o vps.png 'ss://...'`.
+
+Anyone who has a link can use your server, so share it privately.
+
 ### Upgrading from an old `python setup.py install`
 
 Just run `sudo ./install.sh`. It keeps your `/etc/shadowsocks.json` exactly
