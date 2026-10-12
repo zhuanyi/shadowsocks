@@ -196,7 +196,7 @@ echo "done. useful commands:"
 echo "  systemctl status $SERVICE"
 echo "  systemctl restart $SERVICE"
 echo "  journalctl -u $SERVICE -f"
-echo "  sslink -H <server address>   # ss:// links + QR codes for clients"
+echo "  sslink -qr                    # QR code to scan with a client"
 if [ "$NEW_CONFIG" = 1 ]; then
     echo
     echo "client settings (also in $CONFIG):"
@@ -204,7 +204,7 @@ if [ "$NEW_CONFIG" = 1 ]; then
     echo "  password: $PASSWORD"
     echo "  method:   $METHOD"
     echo
-    "$VENV/bin/sslink" -c "$CONFIG" || true
+    "$VENV/bin/sslink" -c "$CONFIG" -qr || true
     case "$METHOD" in
         2022-*) echo "the 2022 ciphers reject clients whose clock is off by"
                 echo "more than 30 seconds; keep time in sync on both sides." ;;

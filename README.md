@@ -37,16 +37,20 @@ To install by hand instead: `pip install .` (inside a virtualenv) and copy
 
 ### Sharing a connection (ss:// links and QR codes)
 
-    sudo sslink                       # guesses the server's address
-    sudo sslink -H vps.example.com    # use this address or domain
-    sudo sslink -n "My VPS"           # name shown in the client
+    sudo sslink              # ss:// links for all ports
+    sudo sslink -qr          # QR code; asks which port if there are several
+    sudo sslink -qr 8389     # QR code for port 8389 (or its number in the list)
+    sudo sslink -qr all      # QR codes for all ports
 
-prints an `ss://` link and a QR code for every port in
-`/etc/shadowsocks.json` (`-c` for another config). Scan the QR code with the
-Android app (+ > Scan QR code), or copy the link and import it from the
-clipboard in the Android app or v2rayN. Use `-H` with the public address if
-the server is behind NAT. For a PNG instead:
-`qrencode -o vps.png 'ss://...'`.
+like `pivpn -qr`. It reads `/etc/shadowsocks.json` (`-c` for another
+config). Scan the QR code with the Android app (+ > Scan QR code), or copy
+the link and import it from the clipboard in the Android app or v2rayN.
+
+* `-H vps.example.com` uses that address or domain in the links. By default
+  sslink guesses the server's address and warns if it looks private (e.g.
+  behind NAT).
+* `-n "My VPS"` sets the name shown in the client.
+* For a PNG instead: `qrencode -o vps.png 'ss://...'`.
 
 Anyone who has a link can use your server, so share it privately.
 

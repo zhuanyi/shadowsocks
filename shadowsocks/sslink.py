@@ -120,11 +120,63 @@ def print_qr(text):
         return False
 
 
+def choose(links, answer=None, ask=None):
+    """Pick the links to show a QR code for, like `pivpn -qr`.
+
+    answer is a port, a 1-based index, 'all', or None to ask (if there is
+    more than one port). Returns a list of (port, link), or None.
+    """
+    if answer is None:
+        if len(links) == 1:
+            return links
+        if ask is None:
+            if not sys.stdin.isatty():
+                print('several ports in the config; pick one with '
+                      '-qr PORT (or -qr all)', file=sys.stderr)
+                return None
+            ask = _input
+        print('::  Server ports  ::')
+        for i, (port, _) in enumerate(links, 1):
+            print('  %d) %d' % (i, port))
+        answer = ask('Please enter the index or port to show, '
+                     'or "all": ')
+    answer = str(answer).strip()
+    if answer.lower() == 'all':
+        return links
+    if answer.isdigit():
+        n = int(answer)
+        for port, link in links:
+            if port == n:
+                return [(port, link)]
+        if 1 <= n <= len(links):
+            return [links[n - 1]]
+    print('no such port or index: %s' % answer, file=sys.stderr)
+    return None
+
+
+def _input(prompt):
+    try:
+        return raw_input(prompt)  # noqa: F821 (Python 2)
+    except NameError:
+        return input(prompt)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='sslink',
-        description='Print ss:// links and QR codes for a shadowsocks '
-                    'server config, to import into clients.')
+        description='Print ss:// links for a shadowsocks server config, or '
+                    'a QR code to scan with a client.',
+        epilog='examples:  sslink            list the links of all ports\n'
+               '           sslink -qr        QR code (asks which port if '
+               'there are several)\n'
+               '           sslink -qr 8389   QR code for port 8389\n'
+               '           sslink -qr all    QR codes for all ports',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('-qr', '--qr', nargs='?', const='', default=None,
+                        metavar='PORT',
+                        help='show a QR code for PORT (a port, its index in '
+                             'the list or "all"); asks if omitted and there '
+                             'are several ports')
     parser.add_argument('-c', '--config', default=DEFAULT_CONFIG,
                         help='config file (default: %(default)s)')
     parser.add_argument('-H', '--host',
@@ -132,8 +184,6 @@ def main():
                              '(default: guessed)')
     parser.add_argument('-n', '--name',
                         help='name shown in the client (default: host name)')
-    parser.add_argument('--no-qr', action='store_true',
-                        help='only print the links')
     args = parser.parse_args()
 
     try:
@@ -157,16 +207,25 @@ def main():
     if not links:
         print('no server ports found in %s' % args.config, file=sys.stderr)
         sys.exit(1)
-    qr_missing = False
-    for port, link in links:
-        print('port %d:\n%s\n' % (port, link))
-        if not args.no_qr:
+
+    if args.qr is None:
+        for port, link in links:
+            print('port %d:\n%s\n' % (port, link))
+        if len(links) == 1:
+            print('run "sslink -qr" for a QR code', file=sys.stderr)
+        else:
+            print('run "sslink -qr" for a QR code (asks which port)',
+                  file=sys.stderr)
+    else:
+        chosen = choose(links, args.qr or None)
+        if not chosen:
+            sys.exit(1)
+        for port, link in chosen:
+            print('\nport %d:' % port)
             if not print_qr(link):
-                qr_missing = True
-            print()
-    if qr_missing:
-        print('(install qrencode to show QR codes: apt-get install qrencode)',
-              file=sys.stderr)
+                print('(install qrencode to show QR codes: '
+                      'apt-get install qrencode)', file=sys.stderr)
+            print(link)
     print('Keep these private: anyone with a link can use your server.',
           file=sys.stderr)
 
@@ -187,6 +246,16 @@ def test_links():
                                'method': 'aes-256-gcm'}, 'h', 'n')
     assert [p for p, _ in links] == [8388, 8389]
     assert links[0][1].endswith('@h:8388#n-8388')
+
+
+def test_choose():
+    links = [(8388, 'a'), (8389, 'b'), (443, 'c')]
+    assert choose(links, '8389') == [(8389, 'b')]
+    assert choose(links, '2') == [(8389, 'b')]
+    assert choose(links, 'all') == links
+    assert choose(links, '9999') is None
+    assert choose(links, ask=lambda prompt: '3') == [(443, 'c')]
+    assert choose(links[:1]) == links[:1]
 
 
 if __name__ == '__main__':
