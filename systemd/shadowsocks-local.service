@@ -1,0 +1,31 @@
+[Unit]
+Description=Shadowsocks local SOCKS5 proxy (client)
+Documentation=https://github.com/zhuanyi/shadowsocks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# runs in the foreground (no -d); logs go to the journal:
+#   journalctl -u shadowsocks-local -f
+ExecStart=/usr/local/bin/sslocal -c /etc/shadowsocks-local.json
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=51200
+
+User=shadowsocks
+Group=shadowsocks
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

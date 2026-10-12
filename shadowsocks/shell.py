@@ -56,10 +56,14 @@ def print_exception(e):
 def print_shadowsocks():
     version = ''
     try:
-        import pkg_resources
-        version = pkg_resources.get_distribution('shadowsocks').version
+        from importlib.metadata import version as get_version
+        version = get_version('shadowsocks')
     except Exception:
-        pass
+        try:
+            import pkg_resources
+            version = pkg_resources.get_distribution('shadowsocks').version
+        except Exception:
+            pass
     print('Shadowsocks %s' % version)
 
 
@@ -74,8 +78,8 @@ def find_config():
 
 
 def check_config(config, is_local):
-    if config.get('daemon', None) == 'stop':
-        # no need to specify configuration for daemon stop
+    if config.get('daemon', None) in ('stop', 'status'):
+        # no need to specify configuration for daemon stop / status
         return
 
     if is_local and not config.get('password', None):
@@ -96,22 +100,37 @@ def check_config(config, is_local):
         config['server_port'] = int(config['server_port'])
 
     if config.get('local_address', '') in [b'0.0.0.0']:
-        logging.warn('warning: local set to listen on 0.0.0.0, it\'s not safe')
+        logging.warning('warning: local set to listen on 0.0.0.0, '
+                        'it\'s not safe')
     if config.get('server', '') in ['127.0.0.1', 'localhost']:
-        logging.warn('warning: server set to listen on %s:%s, are you sure?' %
-                     (to_str(config['server']), config['server_port']))
-    if (config.get('method', '') or '').lower() == 'table':
-        logging.warn('warning: table is not safe; please use a safer cipher, '
-                     'like AES-256-CFB')
-    if (config.get('method', '') or '').lower() == 'rc4':
-        logging.warn('warning: RC4 is not safe; please use a safer cipher, '
-                     'like AES-256-CFB')
+        logging.warning('warning: server set to listen on %s:%s, '
+                        'are you sure?' %
+                        (to_str(config['server']), config['server_port']))
+    method = (config.get('method', '') or '').lower()
+    if encrypt.is_aead2022(method):
+        if config.get('port_password'):
+            passwords = list(config['port_password'].values())
+        else:
+            passwords = [config['password']]
+        for password in passwords:
+            try:
+                encrypt.aead2022.decode_psk(password, method)
+            except ValueError as e:
+                logging.error(e)
+                sys.exit(2)
+    elif not encrypt.is_aead(method):
+        logging.warning('warning: %s is a legacy stream cipher: it has no '
+                        'integrity protection and is easily detected and '
+                        'blocked by active probing. Please switch both the '
+                        'server and the clients to a modern cipher such as '
+                        '2022-blake3-aes-256-gcm or chacha20-ietf-poly1305',
+                        method)
     if config.get('timeout', 300) < 100:
-        logging.warn('warning: your timeout %d seems too short' %
-                     int(config.get('timeout')))
+        logging.warning('warning: your timeout %d seems too short' %
+                        int(config.get('timeout')))
     if config.get('timeout', 300) > 600:
-        logging.warn('warning: your timeout %d seems too long' %
-                     int(config.get('timeout')))
+        logging.warning('warning: your timeout %d seems too long' %
+                        int(config.get('timeout')))
     if config.get('password') in [b'mypassword']:
         logging.error('DON\'T USE DEFAULT PASSWORD! Please change it in your '
                       'config.json!')
@@ -121,6 +140,9 @@ def check_config(config, is_local):
             logging.error('user can be used only on Unix')
             sys.exit(1)
 
+    if encrypt.is_aead2022(method) and not config.get('password'):
+        # port_password only; the keys have been checked above
+        return
     encrypt.try_cipher(config['password'], config['method'])
 
 
@@ -151,8 +173,7 @@ def get_config(is_local):
                     config = json.loads(f.read().decode('utf8'),
                                         object_hook=_decode_dict)
                 except ValueError as e:
-                    logging.error('found an error in config.json: %s',
-                                  e.message)
+                    logging.error('found an error in config.json: %s', e)
                     sys.exit(1)
         else:
             config = {}
@@ -214,7 +235,7 @@ def get_config(is_local):
         sys.exit(2)
 
     config['password'] = to_bytes(config.get('password', b''))
-    config['method'] = to_str(config.get('method', 'aes-256-cfb'))
+    config['method'] = to_str(config.get('method', 'aes-256-gcm'))
     config['port_password'] = config.get('port_password', None)
     config['timeout'] = int(config.get('timeout', 300))
     config['fast_open'] = config.get('fast_open', False)
@@ -225,11 +246,12 @@ def get_config(is_local):
     config['local_address'] = to_str(config.get('local_address', '127.0.0.1'))
     config['local_port'] = config.get('local_port', 1080)
     if is_local:
-        if config.get('server', None) is None:
+        if config.get('server', None) is None and \
+                config.get('daemon', None) not in ('stop', 'status'):
             logging.error('server addr not specified')
             print_local_help()
             sys.exit(2)
-        else:
+        elif config.get('server', None) is not None:
             config['server'] = to_str(config['server'])
     else:
         config['server'] = to_str(config.get('server', '0.0.0.0'))
@@ -282,14 +304,15 @@ Proxy options:
   -p SERVER_PORT         server port, default: 8388
   -b LOCAL_ADDR          local binding address, default: 127.0.0.1
   -l LOCAL_PORT          local port, default: 1080
-  -k PASSWORD            password
-  -m METHOD              encryption method, default: aes-256-cfb
+  -k PASSWORD            password (base64 key for 2022-* methods)
+  -m METHOD              encryption method, default: aes-256-gcm
   -t TIMEOUT             timeout in seconds, default: 300
   --fast-open            use TCP_FASTOPEN, requires Linux 3.7+
 
 General options:
   -h, --help             show this help message and exit
-  -d start/stop/restart  daemon mode
+  -d start/stop/restart/status
+                         daemon mode
   --pid-file PID_FILE    pid file for daemon mode
   --log-file LOG_FILE    log file for daemon mode
   --user USER            username to run as
@@ -297,7 +320,7 @@ General options:
   -q, -qq                quiet mode, only show warnings/errors
   --version              show version information
 
-Online help: <https://github.com/shadowsocks/shadowsocks>
+Online help: <https://github.com/zhuanyi/shadowsocks>
 ''')
 
 
@@ -311,8 +334,8 @@ Proxy options:
   -c CONFIG              path to config file
   -s SERVER_ADDR         server address, default: 0.0.0.0
   -p SERVER_PORT         server port, default: 8388
-  -k PASSWORD            password
-  -m METHOD              encryption method, default: aes-256-cfb
+  -k PASSWORD            password (base64 key for 2022-* methods)
+  -m METHOD              encryption method, default: aes-256-gcm
   -t TIMEOUT             timeout in seconds, default: 300
   --fast-open            use TCP_FASTOPEN, requires Linux 3.7+
   --workers WORKERS      number of workers, available on Unix/Linux
@@ -320,7 +343,8 @@ Proxy options:
 
 General options:
   -h, --help             show this help message and exit
-  -d start/stop/restart  daemon mode
+  -d start/stop/restart/status
+                         daemon mode
   --pid-file PID_FILE    pid file for daemon mode
   --log-file LOG_FILE    log file for daemon mode
   --user USER            username to run as
@@ -328,7 +352,7 @@ General options:
   -q, -qq                quiet mode, only show warnings/errors
   --version              show version information
 
-Online help: <https://github.com/shadowsocks/shadowsocks>
+Online help: <https://github.com/zhuanyi/shadowsocks>
 ''')
 
 

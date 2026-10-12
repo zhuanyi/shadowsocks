@@ -73,7 +73,13 @@ STAGE_UDP_ASSOC = 2
 STAGE_DNS = 3
 STAGE_CONNECTING = 4
 STAGE_STREAM = 5
+STAGE_DRAIN = 6
 STAGE_DESTROYED = -1
+
+# ssserver enters STAGE_DRAIN when a new connection fails authentication
+# (wrong key, tampered or replayed data). Instead of closing the connection
+# immediately, which lets active probes fingerprint the server, it silently
+# reads and discards everything until the client gives up or it times out.
 
 # for each handler, we have 2 stream directions:
 #    upstream:    from client to server direction
@@ -108,8 +114,9 @@ class TCPRelayHandler(object):
         # if is_local, this is sslocal
         self._is_local = is_local
         self._stage = STAGE_INIT
-        self._encryptor = encrypt.Encryptor(config['password'],
-                                            config['method'])
+        self._encryptor = encrypt.new_encryptor(config['password'],
+                                                config['method'],
+                                                not is_local)
         self._fastopen_connected = False
         self._data_to_write_to_local = []
         self._data_to_write_to_remote = []
@@ -319,8 +326,25 @@ class TCPRelayHandler(object):
             self._log_error(e)
             if self._config['verbose']:
                 traceback.print_exc()
-            # TODO use logging when debug completed
+            if self._is_local:
+                self.destroy()
+            else:
+                # most likely a wrong key with a stream cipher
+                self._start_drain()
+
+    def _on_decrypt_error(self, e):
+        self._log_error(e)
+        if self._stage == STAGE_INIT:
+            self._start_drain()
+        else:
             self.destroy()
+
+    def _start_drain(self):
+        logging.debug('draining connection from %s:%d' %
+                      self._client_address)
+        self._stage = STAGE_DRAIN
+        self._data_to_write_to_remote = []
+        self._update_stream(STREAM_UP, WAIT_STATUS_READING)
 
     def _create_remote_socket(self, ip, port):
         addrs = socket.getaddrinfo(ip, port, 0, socket.SOCK_STREAM,
@@ -403,8 +427,14 @@ class TCPRelayHandler(object):
         if not data:
             self.destroy()
             return
+        if self._stage == STAGE_DRAIN:
+            return
         if not is_local:
-            data = self._encryptor.decrypt(data)
+            try:
+                data = self._encryptor.decrypt(data)
+            except Exception as e:
+                self._on_decrypt_error(e)
+                return
             if not data:
                 return
         if self._stage == STAGE_STREAM:
@@ -436,11 +466,11 @@ class TCPRelayHandler(object):
         if not data:
             self.destroy()
             return
-        if self._is_local:
-            data = self._encryptor.decrypt(data)
-        else:
-            data = self._encryptor.encrypt(data)
         try:
+            if self._is_local:
+                data = self._encryptor.decrypt(data)
+            else:
+                data = self._encryptor.encrypt(data)
             self._write_to_sock(data, self._local_sock)
         except Exception as e:
             shell.print_exception(e)
@@ -509,7 +539,7 @@ class TCPRelayHandler(object):
             if event & eventloop.POLL_OUT:
                 self._on_local_write()
         else:
-            logging.warn('unknown socket')
+            logging.warning('unknown socket')
 
     def _log_error(self, e):
         logging.error('%s when handling connection from %s:%d' %
@@ -641,10 +671,10 @@ class TCPRelay(object):
                         break
                     else:
                         if handler.remote_address:
-                            logging.warn('timed out: %s:%d' %
-                                         handler.remote_address)
+                            logging.warning('timed out: %s:%d' %
+                                            handler.remote_address)
                         else:
-                            logging.warn('timed out')
+                            logging.warning('timed out')
                         handler.destroy()
                         self._timeouts[pos] = None  # free memory
                         pos += 1
@@ -690,7 +720,7 @@ class TCPRelay(object):
                     if handler:
                         handler.handle_event(sock, event)
                 else:
-                    logging.warn('poll removed fd')
+                    logging.warning('poll removed fd')
 
         now = time.time()
         if now - self._last_time > TIMEOUT_PRECISION:
