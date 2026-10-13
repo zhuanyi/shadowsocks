@@ -38,13 +38,13 @@ DEFAULT_CONFIG = '/etc/shadowsocks.json'
 
 def make_link(host, port, method, password, name=None):
     method = method.lower()
-    if method.startswith('2022-'):
-        # SIP002: AEAD-2022 user info is percent-encoded, not base64
-        user_info = '%s:%s' % (method, quote(password, safe=''))
-    else:
-        user_info = base64.urlsafe_b64encode(
-            ('%s:%s' % (method, password)).encode('utf-8'))
-        user_info = user_info.decode('ascii').rstrip('=')
+    # SIP002 user info: base64url("method:password") without padding.
+    # SIP002 also allows plain percent-encoded "method:password" for the 2022
+    # ciphers, but the Android app only understands the base64 form, while
+    # shadowsocks-rust, Xray, sing-box etc. accept both.
+    user_info = base64.urlsafe_b64encode(
+        ('%s:%s' % (method, password)).encode('utf-8'))
+    user_info = user_info.decode('ascii').rstrip('=')
     if ':' in host and not host.startswith('['):
         host = '[%s]' % host
     link = 'ss://%s@%s:%d' % (user_info, host, int(port))
@@ -234,9 +234,11 @@ def test_links():
     psk = 'bVdvo2Ffq0cDNMn+0kXfR9Y2Z6YDoHn2bZyBq3Ow+6k='
     link = make_link('1.2.3.4', 8388, '2022-blake3-aes-256-gcm', psk,
                      'my vps')
-    assert link == ('ss://2022-blake3-aes-256-gcm:'
-                    'bVdvo2Ffq0cDNMn%2B0kXfR9Y2Z6YDoHn2bZyBq3Ow%2B6k%3D'
+    assert link == ('ss://MjAyMi1ibGFrZTMtYWVzLTI1Ni1nY206YlZkdm8yRmZxMGNE'
+                    'Tk1uKzBrWGZSOVkyWjZZRG9IbjJiWnlCcTNPdys2az0'
                     '@1.2.3.4:8388#my%20vps')
+    assert android_parse(link) == ('2022-blake3-aes-256-gcm', psk,
+                                   '1.2.3.4', 8388, 'my vps')
     # the example from SIP002
     assert make_link('192.168.100.1', 8888, 'aes-128-gcm', 'test') == \
         'ss://YWVzLTEyOC1nY206dGVzdA@192.168.100.1:8888'
@@ -246,6 +248,17 @@ def test_links():
                                'method': 'aes-256-gcm'}, 'h', 'n')
     assert [p for p, _ in links] == [8388, 8389]
     assert links[0][1].endswith('@h:8388#n-8388')
+
+
+def android_parse(link):
+    """How the shadowsocks Android app reads a SIP002 link (Profile.kt:
+    the user info is always base64 decoded), for tests."""
+    from urllib.parse import urlsplit, unquote
+    u = urlsplit(link)
+    user_info = u.netloc.rsplit('@', 1)[0]
+    decoded = base64.urlsafe_b64decode(user_info + '=' * (-len(user_info) % 4))
+    method, password = decoded.decode('utf-8').split(':', 1)
+    return method, password, u.hostname, u.port, unquote(u.fragment)
 
 
 def test_choose():
