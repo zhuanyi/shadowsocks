@@ -26,6 +26,7 @@
 #
 # Environment variables:
 #   SS_CONFIG   config file to use (default /etc/shadowsocks.json)
+#   SS_BBR=0    don't enable TCP BBR congestion control (enabled by default)
 #   SS_NONINTERACTIVE=1  don't ask, generate a config from SS_PORT and
 #               SS_METHOD instead (also done when not run in a terminal)
 #   SS_PORT     server port for a generated config (default 8388)
@@ -194,6 +195,38 @@ PY
 fi
 chown root:"$USER_NAME" "$CONFIG"
 chmod 640 "$CONFIG"
+
+# TCP BBR: usually much faster than the default (cubic) on long-distance or
+# lossy links, e.g. across borders. Only changes how this server sends TCP.
+BBR_CONF=/etc/sysctl.d/90-shadowsocks-bbr.conf
+BBR_MODULE=/etc/modules-load.d/shadowsocks-bbr.conf
+if [ "${SS_BBR:-1}" != 0 ]; then
+    if [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" = bbr ]
+    then
+        echo "==> TCP BBR is already enabled"
+    elif modprobe tcp_bbr 2>/dev/null; \
+            sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null \
+            | grep -qw bbr; then
+        echo "==> enabling TCP BBR congestion control"
+        if sysctl -q -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null; then
+            {
+                echo "# added by the shadowsocks install.sh; delete this file"
+                echo "# (and $BBR_MODULE) to go back to the default"
+                echo "net.ipv4.tcp_congestion_control = bbr"
+            } > "$BBR_CONF"
+            # fq pacing helps BBR, but kernels >= 4.13 pace without it
+            if sysctl -q -w net.core.default_qdisc=fq 2>/dev/null; then
+                echo "net.core.default_qdisc = fq" >> "$BBR_CONF"
+            fi
+            echo tcp_bbr > "$BBR_MODULE"
+        else
+            echo "NOTE: could not enable TCP BBR (not allowed in this"
+            echo "      container/VPS type?); skipped"
+        fi
+    else
+        echo "NOTE: this kernel has no TCP BBR support; skipped"
+    fi
+fi
 
 echo "==> installing systemd service $SERVICE"
 for unit in shadowsocks-server shadowsocks-local; do
