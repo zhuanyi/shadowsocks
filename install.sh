@@ -21,10 +21,15 @@
 #
 # Run it again after `git pull` to upgrade. To remove: sudo ./uninstall.sh
 #
+# Without a config, it asks for the cipher, ports and passwords (Enter
+# generates a random key); `sudo ssconfig` changes them later.
+#
 # Environment variables:
 #   SS_CONFIG   config file to use (default /etc/shadowsocks.json)
-#   SS_PORT     server port for a newly generated config (default 8388)
-#   SS_METHOD   cipher for a newly generated config
+#   SS_NONINTERACTIVE=1  don't ask, generate a config from SS_PORT and
+#               SS_METHOD instead (also done when not run in a terminal)
+#   SS_PORT     server port for a generated config (default 8388)
+#   SS_METHOD   cipher for a generated config
 #               (default 2022-blake3-aes-256-gcm)
 
 set -eu
@@ -55,6 +60,9 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv
 # 2022-blake3-chacha20-poly1305, xchacha20-ietf-poly1305 and the legacy
 # salsa20 / chacha20 stream ciphers
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libsodium23 \
+    >/dev/null 2>&1 || true
+# optional: QR codes in `sslink`
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qrencode \
     >/dev/null 2>&1 || true
 
 echo "==> installing shadowsocks into $VENV"
@@ -119,7 +127,7 @@ for f in /etc/rc.local /etc/crontab /etc/cron.d/* \
     fi
 done
 
-for prog in ssserver sslocal; do
+for prog in ssserver sslocal sslink ssconfig; do
     ln -sf "$VENV/bin/$prog" "/usr/local/bin/$prog"
 done
 
@@ -127,6 +135,17 @@ if ! id "$USER_NAME" >/dev/null 2>&1; then
     echo "==> creating system user $USER_NAME"
     useradd --system --no-create-home --home-dir /nonexistent \
         --shell /usr/sbin/nologin "$USER_NAME"
+fi
+
+NEW_CONFIG=0
+if [ ! -f "$CONFIG" ] && [ -t 0 ] && [ -z "${SS_NONINTERACTIVE:-}" ]; then
+    # ask for the cipher, ports and passwords, like `rclone config`
+    echo "==> creating $CONFIG"
+    if "$VENV/bin/ssconfig" -c "$CONFIG" --installer; then
+        NEW_CONFIG=1
+    else
+        echo "no config saved; generating a default one instead"
+    fi
 fi
 
 if [ ! -f "$CONFIG" ]; then
@@ -152,8 +171,7 @@ print(secrets.token_urlsafe(24))') ;;
 }
 CONF
     NEW_CONFIG=1
-else
-    NEW_CONFIG=0
+elif [ "$NEW_CONFIG" = 0 ]; then
     if ! python3 - "$CONFIG" <<'PY'
 import json, sys
 m = (json.load(open(sys.argv[1])).get('method') or 'aes-256-gcm').lower()
@@ -193,15 +211,26 @@ echo "done. useful commands:"
 echo "  systemctl status $SERVICE"
 echo "  systemctl restart $SERVICE"
 echo "  journalctl -u $SERVICE -f"
+echo "  sudo ssconfig                 # change ports, passwords, cipher"
+echo "  sudo sslink -qr               # QR code to scan with a client"
 if [ "$NEW_CONFIG" = 1 ]; then
     echo
-    echo "client settings (also in $CONFIG):"
-    echo "  port:     $PORT"
-    echo "  password: $PASSWORD"
-    echo "  method:   $METHOD"
-    case "$METHOD" in
-        2022-*) echo "the 2022 ciphers reject clients whose clock is off by"
-                echo "more than 30 seconds; keep time in sync on both sides." ;;
-    esac
-    echo "remember to open port $PORT (TCP and UDP) in your firewall."
+    echo "the passwords are saved in $CONFIG"
+    "$VENV/bin/sslink" -c "$CONFIG" -qr || true
+    PORTS=$(python3 - "$CONFIG" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+if c.get('port_password'):
+    ports = sorted(c['port_password'], key=int)
+else:
+    p = c.get('server_port', 8388)
+    ports = p if isinstance(p, list) else [p]
+print(' '.join(str(p) for p in ports))
+PY
+)
+    if grep -q '"2022-' "$CONFIG"; then
+        echo "the 2022 ciphers reject clients whose clock is off by"
+        echo "more than 30 seconds; keep time in sync on both sides."
+    fi
+    echo "remember to open port(s) $PORTS (TCP and UDP) in your firewall."
 fi

@@ -30,7 +30,7 @@ for unit in shadowsocks-server shadowsocks-local; do
 done
 systemctl daemon-reload 2>/dev/null || true
 
-for prog in ssserver sslocal; do
+for prog in ssserver sslocal sslink ssconfig; do
     link="/usr/local/bin/$prog"
     if [ -L "$link" ] && readlink "$link" | grep -q "^$PREFIX/"; then
         rm -f "$link"
