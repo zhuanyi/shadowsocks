@@ -23,6 +23,7 @@ setup(
     sslocal = shadowsocks.local:main
     ssserver = shadowsocks.server:main
     sslink = shadowsocks.sslink:main
+    ssconfig = shadowsocks.ssconfig:main
     """,
     classifiers=[
         'License :: OSI Approved :: Apache Software License',

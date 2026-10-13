@@ -17,10 +17,9 @@ Server
     sudo ./install.sh
 
 The script installs shadowsocks into a virtualenv in `/opt/shadowsocks`,
-links `ssserver` / `sslocal` into `/usr/local/bin`, creates
-`/etc/shadowsocks.json` with a random `2022-blake3-aes-256-gcm` key (if you
-don't have a config yet) and enables the `shadowsocks-server` systemd
-service. No source files need
+links `ssserver`, `sslocal`, `ssconfig` and `sslink` into `/usr/local/bin`
+and enables the `shadowsocks-server` systemd service. If you don't have a
+config yet, it walks you through creating one (see below). No source files need
 patching any more, and it works with Python 3.8 - 3.13 and OpenSSL 1.1 / 3.x
 (Debian 11, 12, 13; Ubuntu 20.04+).
 
@@ -34,6 +33,31 @@ Manage the service with:
 
 To install by hand instead: `pip install .` (inside a virtualenv) and copy
 `systemd/shadowsocks-server.service` to `/etc/systemd/system/`.
+
+### Configuring (ports, passwords, cipher)
+
+    sudo ssconfig
+
+works like `rclone config`. Without a config it asks for:
+
+1. the cipher (Enter = `2022-blake3-aes-256-gcm`),
+2. the server port(s), e.g. `8388, 443`,
+3. a password for each port: **press Enter to generate a random key** (the
+   same as `openssl rand -base64 32`), or type your own (for the 2022
+   ciphers it must be such a base64 key),
+4. the listen address and timeout.
+
+With an existing config it shows a menu to add or delete ports, change a
+port's password, switch the cipher (generating new keys when the old
+passwords don't fit it) or start over. On saving it keeps the previous
+version as `/etc/shadowsocks.json.bak-<date>`, offers to restart the service
+and to show a QR code.
+
+All passwords, generated or not, are stored in plain text in
+`/etc/shadowsocks.json` (readable by root and the service only), so
+`sudo cat /etc/shadowsocks.json` shows them later. `install.sh` runs
+`ssconfig` when there is no config; set `SS_NONINTERACTIVE=1` to skip the
+questions and generate a default config instead.
 
 ### Sharing a connection (ss:// links and QR codes)
 
