@@ -37,6 +37,14 @@ for prog in ssserver sslocal sslink ssconfig; do
     fi
 done
 
+if [ -f /etc/sysctl.d/90-shadowsocks-bbr.conf ]; then
+    echo "==> removing the TCP BBR setting (back to the default, cubic)"
+    rm -f /etc/sysctl.d/90-shadowsocks-bbr.conf \
+        /etc/modules-load.d/shadowsocks-bbr.conf
+    sysctl -q -w net.ipv4.tcp_congestion_control=cubic 2>/dev/null || true
+    sysctl -q --system >/dev/null 2>&1 || true
+fi
+
 if [ -d "$PREFIX" ]; then
     echo "==> removing $PREFIX"
     rm -rf "$PREFIX"

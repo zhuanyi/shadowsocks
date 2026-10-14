@@ -78,6 +78,16 @@ the link and import it from the clipboard in the Android app or v2rayN.
 
 Anyone who has a link can use your server, so share it privately.
 
+### TCP BBR
+
+`install.sh` also switches the kernel's TCP congestion control to **BBR**
+(in `/etc/sysctl.d/90-shadowsocks-bbr.conf`), which usually gives much
+better speeds than the default (cubic) on long-distance or lossy links. It
+only changes how this server sends TCP data, i.e. your downloads. It is
+skipped when the kernel or VPS type doesn't allow it (e.g. some containers),
+`SS_BBR=0 sudo ./install.sh` leaves it alone, and `uninstall.sh` reverts it.
+Check it with `sysctl net.ipv4.tcp_congestion_control`.
+
 ### Upgrading from an old `python setup.py install`
 
 Just run `sudo ./install.sh`. It keeps your `/etc/shadowsocks.json` exactly
@@ -183,12 +193,18 @@ instead.
 Client
 ------
 
-* [Windows] / [OS X]
-* [Android] / [iOS]
-* [OpenWRT]
+Recommended clients (all support the 2022 ciphers and `ss://` links):
 
-Use GUI clients on your local PC/phones. Check the README of your client
-for more information.
+* Android: the official [Android] app (Google Play: "Shadowsocks" by
+  Max Lv), or [v2rayNG] (APK from its GitHub releases:
+  `v2rayNG_<version>_arm64-v8a.apk` for current phones)
+* Windows: [v2rayN] (GitHub releases:
+  `v2rayN-windows-64.zip` for x64, `v2rayN-windows-arm64.zip` for ARM; a
+  portable zip: extract it and run v2rayN). The old official
+  shadowsocks-windows client does not support the 2022 ciphers.
+
+Clients listed by the original project (the [Windows] and [OS X] ones
+predate the 2022 ciphers): [Windows] / [OS X] / [iOS] / [OpenWRT].
 
 Documentation
 -------------
@@ -222,6 +238,8 @@ Bugs and Issues
 
 
 [Android]:           https://github.com/shadowsocks/shadowsocks-android
+[v2rayNG]:           https://github.com/2dust/v2rayNG/releases
+[v2rayN]:            https://github.com/2dust/v2rayN/releases
 [Build Status]:      https://img.shields.io/travis/shadowsocks/shadowsocks/master.svg?style=flat
 [Configuration]:     https://github.com/shadowsocks/shadowsocks/wiki/Configuration-via-Config-File
 [Coverage Status]:   https://jenkins.shadowvpn.org/result/shadowsocks
