@@ -5,7 +5,7 @@ shadowsocks
 [![Build Status]][Travis CI]
 [![Coverage Status]][Coverage]
 
-A fast tunnel proxy that helps you bypass firewalls.
+A fast, secure tunnel proxy.
 
 Server
 ------
@@ -88,6 +88,23 @@ skipped when the kernel or VPS type doesn't allow it (e.g. some containers),
 `SS_BBR=0 sudo ./install.sh` leaves it alone, and `uninstall.sh` reverts it.
 Check it with `sysctl net.ipv4.tcp_congestion_control`.
 
+To turn it on by hand (Linux 4.9 or newer), e.g. on a server set up without
+`install.sh`:
+
+    sudo modprobe tcp_bbr
+    sysctl net.ipv4.tcp_available_congestion_control   # must list bbr
+    printf 'net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n' |
+        sudo tee /etc/sysctl.d/90-bbr.conf
+    echo tcp_bbr | sudo tee /etc/modules-load.d/bbr.conf
+    sudo sysctl --system
+    sysctl net.ipv4.tcp_congestion_control             # should print bbr
+
+The files make it permanent across reboots. If `sysctl --system` complains
+about `default_qdisc`, the kernel lacks the `fq` scheduler; that's fine,
+BBR works without it on Linux 4.13 and newer. To undo it:
+`sudo rm /etc/sysctl.d/90-bbr.conf /etc/modules-load.d/bbr.conf` and
+`sudo sysctl -w net.ipv4.tcp_congestion_control=cubic`.
+
 ### Upgrading from an old `python setup.py install`
 
 Just run `sudo ./install.sh`. It keeps your `/etc/shadowsocks.json` exactly
@@ -165,12 +182,13 @@ On top of AEAD, the server
   and discards the data until the client gives up or the timeout expires,
   so probes can't tell it apart from other servers by how it reacts.
 
-**A note on the GFW:** the 2022 ciphers fix the known weaknesses that get
-Shadowsocks servers found by active probing and replays. But since late
-2021 the GFW also blocks some traffic simply because it looks like random
-bytes, which is true of every Shadowsocks variant. If the server still gets
-blocked, the next step is a protocol that looks like normal TLS, such as
-Xray (VLESS + REALITY) or Shadowsocks behind a TLS plugin.
+**If connections still get blocked:** the 2022 ciphers fix the known
+weaknesses that let Shadowsocks servers be identified by active probing and
+replays. Some networks, however, also block traffic simply because it looks
+like random bytes, which is true of every Shadowsocks variant. In that case
+a protocol that looks like normal HTTPS works better, such as Xray
+VLESS + REALITY (see [vless-oneclick]), which can run on the same server
+next to Shadowsocks.
 
 ### Usage
 
@@ -240,6 +258,7 @@ Bugs and Issues
 [Android]:           https://github.com/shadowsocks/shadowsocks-android
 [v2rayNG]:           https://github.com/2dust/v2rayNG/releases
 [v2rayN]:            https://github.com/2dust/v2rayN/releases
+[vless-oneclick]:    https://github.com/zhuanyi/vless-oneclick
 [Build Status]:      https://img.shields.io/travis/shadowsocks/shadowsocks/master.svg?style=flat
 [Configuration]:     https://github.com/shadowsocks/shadowsocks/wiki/Configuration-via-Config-File
 [Coverage Status]:   https://jenkins.shadowvpn.org/result/shadowsocks

@@ -5,10 +5,10 @@
 # Required-Stop:     $network $local_fs $remote_fs
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Fast tunnel proxy that helps you bypass firewalls
+# Short-Description: Fast, secure tunnel proxy
 # Description:       A secure socks5 proxy, designed to protect your Internet traffic.
 #		     This package contain local and server part of shadowsocks, a fast,
-#		     powerful tunnel proxy to bypass firewalls.
+#		     powerful tunnel proxy.
 ### END INIT INFO
 
 # Author: Shell.Xu <shell909090@gmail.com>
