@@ -9,7 +9,7 @@ setup(
     name="shadowsocks",
     version="2.7.0",
     license='http://www.apache.org/licenses/LICENSE-2.0',
-    description="A fast tunnel proxy that help you get through firewalls",
+    description="A fast, secure tunnel proxy",
     author='clowwindy',
     author_email='clowwindy42@gmail.com',
     url='https://github.com/zhuanyi/shadowsocks',

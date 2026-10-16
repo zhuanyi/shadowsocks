@@ -294,7 +294,7 @@ def print_help(is_local):
 
 def print_local_help():
     print('''usage: sslocal [OPTION]...
-A fast tunnel proxy that helps you bypass firewalls.
+A fast, secure tunnel proxy.
 
 You can supply configurations via either config file or command line arguments.
 
@@ -326,7 +326,7 @@ Online help: <https://github.com/zhuanyi/shadowsocks>
 
 def print_server_help():
     print('''usage: ssserver [OPTION]...
-A fast tunnel proxy that helps you bypass firewalls.
+A fast, secure tunnel proxy.
 
 You can supply configurations via either config file or command line arguments.
 

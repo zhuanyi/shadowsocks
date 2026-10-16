@@ -12,8 +12,8 @@ Package: shadowsocks
 Architecture: all
 Pre-Depends: dpkg (>= 1.15.6~)
 Depends: ${misc:Depends}, ${python:Depends}, python-pkg-resources, python-m2crypto
-Description: Fast tunnel proxy that helps you bypass firewalls
+Description: Fast, secure tunnel proxy
  A secure socks5 proxy, designed to protect your Internet traffic.
  .
  This package contain local and server part of shadowsocks, a fast,
- powerful tunnel proxy to bypass firewalls.
+ powerful tunnel proxy.

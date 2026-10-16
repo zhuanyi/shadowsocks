@@ -3,7 +3,7 @@ shadowsocks
 
 |PyPI version| |Build Status| |Coverage Status|
 
-A fast tunnel proxy that helps you bypass firewalls.
+A fast, secure tunnel proxy.
 
 Server
 ------
